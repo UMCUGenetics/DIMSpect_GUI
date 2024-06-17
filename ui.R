@@ -1,6 +1,9 @@
 ###### DIMSpect GUI ui part ######
 
+library(shinyjs)
+
 ui <- fluidPage(
+  shinyjs::useShinyjs(),
   titlePanel(title = span(img(src = "DIMSpect_logo.png", height = 30), " DIMS results database")),
   # add a spinner which is activated when a process takes more than 500 ms to replace the progress bar
   # add_busy_spinner(spin = "folding-cube", position = "full-page", timeout = 500), 
@@ -19,19 +22,31 @@ ui <- fluidPage(
                   uiOutput("sel_for_query"),
                   actionButton(inputId = "update_view_pat_sel", label = "Werkt nog niet: Exclude entries from query"),
                   uiOutput("sample_selection"),
-                  textInput(inputId = "zscore_high", label = "Cut-off for elevated Z-score", value = 2),
-                  textInput(inputId = "zscore_low", label = "Cut-off for decreased Z-score", value = -1.5),
-                  selectInput(inputId = "identified_only", label = "Identified or unidentified peak groups", 
-                              choices = c("Identified only", "Unidentified only", "both identified and unidentified"), selected = 1),
+                  disabled(
+                    numericInput(inputId = "zscore_low", label = "Cut-off for decreased Z-score", value = -1.5, step = 0.1)
+                    ),
+                  disabled(
+                    numericInput(inputId = "zscore_high", label = "Cut-off for elevated Z-score", value = 2, step = 0.1)
+                    ),
+                  disabled(
+                    selectInput(inputId = "identified_only", label = "Identified or unidentified peak groups", 
+                              choices = c("Identified only" = "iden", "Unidentified only" = "not_iden", 
+                                          "both identified and unidentified" = "all"), selected = 1)
+                    ),
                   actionButton(inputId = "run_patient_query", label = "Run patient query")
                 ), # end sidebarPanel
                         
                 mainPanel(
-                  tableOutput(outputId = 'patient_list'),
-                  # plotOutput('violin_plot'),
-                  plotOutput('bar_plot'),
-                  # tableOutput(outputId = 'patient_data_table')
-                  DT::dataTableOutput("patient_data_table")
+                  tabsetPanel(type = "tabs", id = "patient_query",
+                    tabPanel("Patient info",DT::dataTableOutput('patient_list')),
+                    
+                    tabPanel("Barplot", 
+                             plotOutput('bar_plot', height = "600px"),
+                             DT::dataTableOutput("patient_data_table_bar")),
+                    tabPanel("Violinplot", 
+                             plotOutput("violin_plot", height = "600px"),
+                             DT::dataTableOutput("table_violin"))
+                  )
                 ) #end of mainPanel
                         
               ) #end of sidebarLayout (includes sidebarPanel and mainPanel)

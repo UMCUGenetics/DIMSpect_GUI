@@ -1,164 +1,117 @@
 # functions for DIMSpect Shiny GUI
-get_info_on_patient <- function(patient_id = "", sample_id = "", run_name = "", 
+get_info_on_patient <- function(api, patient_id, sample_id = "", run_name = "", 
                                 matrix_selected = "") {
-  # patient <- api %>%
-  #     req_url_path_append('patients') %>%
-  #     req_url_path_append(patient_id) %>%
-  #     req_perform() %>%
-  #     resp_body_json()
-  # start selection either from patient_id or from sample_id
-  if (patient_id != "" | sample_id !="") {
-    patient_table <- sample_info[which(grepl(patient_id, sample_info[ , "sample_name"]) & 
-                                       grepl(sample_id,  sample_info[ , "sample_name"])), ]
-  }
-  # filter on run name
-  if (run_name != "" & !is.null(patient_table)) {
-    patient_table <- patient_table[grep(run_name, patient_table[ , "run_name"]), ]
-  }
-  # filter for matrix
-  if (!is.null(patient_table)) {
-    patient_table <- patient_table[grep(matrix_selected, patient_table[ , "matrix"]), ]
-  }
+  patient_table <- get_patient_info_db(api, patient_id, sample_id, run_name, matrix_selected)
+  
   # if patient_table is empty, display an empty matrix
   if (is.null(patient_table)) {
-    patient_table <- sample_info[0, ]
+    patient_table <- data.frame(matrix(ncol = 4, nrow = 0))
+    patient_table <- as.data.frame(patient_table)
   }
-  patient_df <- as.data.frame(patient_table)
-  return(patient_df)
+  patient_table <- patient_table %>% rename("ID" = Sample.id, "Patient ID" = Sample.patient_id, 
+                                            "Matrix" = Sample.type, "Run name" = name)
+  patient_table <- patient_table %>% select(ID, `Patient ID`, `Run name`, Matrix)
+  return(patient_table)
 }
 
-# query all patients
-get_all_patients <- function(patient_ids) {
-  all_patients <- api %>%
-    req_url_path_append('patients') %>%
+get_patient_info_db <- function(api, patient_id, sample_id, run, matrix) {
+  patient_info <- api %>%
+    req_url_path_append("patient/info") %>%
+    req_url_query(pat_id = patient_id) %>%
+    req_url_query(samp_id = sample_id) %>%
+    req_url_query(run_name = run) %>%
+    req_url_query(matrix_type = matrix) %>%
     req_perform() %>%
-    resp_body_json(simplifyVector=TRUE)
-  return(all_patients)
+    resp_body_json(simplifyVector = T)
+  
+  patient_info <- as.data.frame.list(patient_info)
+  return(patient_info)
 }
 
-get_patient_data <- function(patient_query_input, zscore_high = 2, zscore_low = -1.5, 
-                             identified_only = "Identified only") {
+get_run_zscore_data_db <- function(api, run_names, iden, zscore_min, zscore_max, samples) {
+  run_zscore_data <- api %>%
+    req_url_path_append("results/hmdb") %>%
+    req_url_path_append(iden) %>%
+    req_url_path_append("zscores") %>%
+    req_url_path_append(zscore_min) %>%
+    req_url_path_append(zscore_max) %>%
+    req_url_query(run_names = run_names, .multi = "explode") %>%
+    req_url_query(samples = samples, .multi = "explode") %>%
+    req_perform() %>%
+    resp_body_json(simplifyVector = T)
+  
+  run_zscore_data <- as.data.frame.list(run_zscore_data)
+  run_zscore_data <- run_zscore_data %>% select(-c(DIMSResults.uuid, HMDB.uuid, DIMSResults.intensity))
+  run_zscore_data$DIMSResults.polarity <- ifelse(run_zscore_data$DIMSResults.polarity == TRUE, "negative", "positive")
+  run_zscore_data <- run_zscore_data %>% rename(Zscore = DIMSResults.z_score, 
+                                                    scanmode = DIMSResults.polarity, m_z = DIMSResults.m_z, run_name = DIMSResults.run_name,
+                                                    sample_id = DIMSResults.sample_id, HMDB_id = HMDB.hmdb_id, HMDB_name = HMDB.name,
+                                                    HMDB_description = HMDB.description, HMDB_theor_mz = HMDB.theor_MZ)
+  # TODO: verwijder distinct() na update DIMSdb
+  run_zscore_data <- run_zscore_data %>% distinct()
+  run_zscore_data <- run_zscore_data  %>% pivot_wider(names_from = sample_id, values_from = c(Zscore), names_glue = "{sample_id}_{.value}")
+  
+  return(run_zscore_data)
+}
+
+get_patient_data <- function(api, patient_query_input, zscore_high, zscore_low, identified_only) {
   # get data for unique run names
-  all_run_names <- unique(patient_query_input$run_name)
-  all_samples <- unique(patient_query_input$sample_name)
-  # get data from (pseudo)database
-  for (run_number in 1:length(all_run_names)) {
-    query_run_name <- all_run_names[run_number]
-    data_selected_run <- pseudo_database[[query_run_name]]
-    # TODO: multiple runs into a list data_all_runs. Get this from real database.
-  }
-  # TODO: check if data_selected_run is not empty
+  # print(patient_query_input)
+  # TODO: check ID kolom
+  all_run_names <- unique(patient_query_input$`Run name`)
+  all_samples <- unique(patient_query_input$ID)
   
-  # filter data for identified or unidentified peak groups
-  # TODO: this filter doesn't work yet.
-  empty_rows <- which(data_selected_run$assi_HMDB == "")
-  if (identified_only == "Identified only" && length(empty_rows) > 0) {
-    data_selected_run <- data_selected_run[-empty_rows, ]
-  } else if (identified_only == "Unidentified only" && length(empty_rows) > 0) {
-    data_selected_run <- data_selected_run[empty_rows, ]
-  }
-  
-  # reduce data to metabolites with aberrant Z-scores for query sample_ids.
-  for (query_sample_id in all_samples) {
-    zscore_col <- paste0(query_sample_id, "_Zscore")
-    zscore_colnr <- which(colnames(data_selected_run) == zscore_col)
-    select_rows <- data_selected_run[ , zscore_colnr] > zscore_high | data_selected_run[ , zscore_colnr] < zscore_low
-    data_filt_zscore <- data_selected_run[select_rows, ]
-    # TODO: if there's more than one sample, store more than one data_filt_zscore in a list
-  }
-  select_columns <- c(which(colnames(data_filt_zscore) == "HMDB_code"), 
-                      which(colnames(data_filt_zscore) == "mzmed.pgrp"),
-                      which(colnames(data_filt_zscore) == "assi_HMDB"),
-                      which(colnames(data_filt_zscore) == "scanmode"),
-                      grep("Zscore", colnames(data_filt_zscore)))
-  data_filt_zscore <- data_filt_zscore[ , select_columns]
-  # change column name for "assi_HMDB" and "mzmed.pgrp"
-  colnames(data_filt_zscore)[which(colnames(data_filt_zscore) == "assi_HMDB")] <- "HMDB_name"
-  colnames(data_filt_zscore)[which(colnames(data_filt_zscore) == "mzmed.pgrp")] <- "m_z"
-  
+  run_data <- get_run_zscore_data_db(api, all_run_names, identified_only, zscore_low, zscore_high, all_samples)
+
   # sort data_filt_zscore on Z-score for query patient
-  zscore_col <- paste0(query_sample_id, "_Zscore")
-  zscore_colnr <- which(colnames(data_filt_zscore) == zscore_col)
-  sort_order <- sort(data_filt_zscore[ , zscore_colnr], index.return=TRUE)
-  data_sorted <- data_filt_zscore[sort_order$ix, ]
-  
-  # Many entries contain several HMDB IDs. Use only first one in first column
-  data_sorted$full_HMDB_code <- data_sorted$HMDB_code
-  data_sorted$full_HMDB_name <- data_sorted$HMDB_name
-  for (row_index in 1:nrow(data_sorted)) {
-    data_sorted$HMDB_code[row_index] <- strsplit(data_sorted$HMDB_code[row_index], ";")[[1]][1]
-    data_sorted$HMDB_name[row_index] <- strsplit(data_sorted$HMDB_name[row_index], ";")[[1]][1]
-  }
-  
-  return(data_sorted)
+  sample_cols <- paste0(all_samples, "_Zscore")
+  run_data <- run_data %>% arrange(across(sample_cols, desc))
+  return(run_data)
 }
 
-# Create violin plots (adapted from code from DIMS pipeline)
-create_violin_plots <- function(sample_id, data_perrun) {
-  
-  # set parameters for plots
-  plot_height <- 9.6 
-  plot_width <- 6
-  fontsize <- 1 
-  circlesize <- 0.8 
+select_plot_data <- function(patient_data, selected_metabolites) {
+  info_columns <- grep("HMDB_name|m_z", colnames(patient_data))
+  zscore_columns <- grep("_Zscore", colnames(patient_data))
+  # selection of metabolites from table (https://yihui.shinyapps.io/DT-rows)
+  plot_data_selected <- patient_data[selected_metabolites, c(info_columns[2], zscore_columns)]
+  return(plot_data_selected)
+}
+
+create_violin_plots <- function(metab_data, sample_id) {
   colors_4plot <- c("#22E4AC", "#00B0F0", "#504FFF","#A704FD","#F36265","#DA0641")
-  #                   green     blue      blue/purple purple    orange    red
   
-  # page headers:
-  # page_headers <- names(metab_perpage)
+  data_viool <- metab_data %>% select(-c(m_z, scanmode, HMDB_theor_mz, HMDB_description))
   
-  # create a violin plot of all metabolites in data_perrun
-  zscore_col <- paste0(sample_id, "_Zscore")
-  zscore_colnr <- which(colnames(data_perrun) == zscore_col)
-  pt_list_2plot <- data_perrun[ , zscore_colnr]
-  data_sorted_min1column <- data_sorted[ , -zscore_colnr]
-  # shorten entries in column HMDB_code
-  for (row_index in 1:nrow(data_sorted_min1column)) {
-    data_sorted_min1column$HMDB_code[row_index] <- strsplit(data_sorted_min1column$HMDB_code[row_index][[1]], ";")[[1]][1]
-  }
-  # put data in long format. Something goes wrong here.
-  metab_list_2plot <- reshape2::melt(data_sorted_min1column, id.vars = "HMDB_code")
-  srt <- sort(metab_list_2plot$HMDB_code, index.return=TRUE)
-  metab_list_2plot <- metab_list_2plot[srt$ix, ]
-  metab_list_2plot$value[metab_list_2plot$value >  20] <-  20
-  metab_list_2plot$value[metab_list_2plot$value <  -5] <-  -5
-  # for (row_number in 1:nrow(data_sorted)) {
-  # extract original data for patient of interest (pt_name) before cut-offs
-  # pt_list_2plot_orig <- data_sorted[ , zscore_colnr]
-  # cut off Z-scores higher than 20 or lower than -5 (for nicer plots)
-  #metab_list_2plot$value[metab_list_2plot$value >  20] <-  20
-  #metab_list_2plot$value[metab_list_2plot$value <  -5] <-  -5
-  # extract data for patient of interest (pt_name)
-  #pt_list_2plot <- data_sorted[ , zscore_colnr]
-  # restore original Z-score before cut-off, for showing Z-scores in PDF
-  # pt_list_2plot$value_orig <- pt_list_2plot_orig$value
-  # remove patient of interest (pt_name) from list; violins will be made up of controls and other patients
-  # data_sorted_1column <- data_sorted[row_number, -zscore_colnr]
-  # put in long format for ggplot
-  # metab_list_2plot <- reshape2::melt(data_sorted_1column, id.vars = "HMDB_code")
+  data_viool <- data_viool %>% pivot_longer(cols = ends_with("_Zscore"), names_to = c("Sample"), values_to = "Z_score", values_drop_na = TRUE)
+  data_viool$Sample <- gsub("_Zscore", "", data_viool$Sample)
+  data_viool_pt_orig <- data_viool[which(data_viool$Sample %in% sample_id), ]
+
+  data_viool$Z_score[data_viool$Z_score >  20] <-  20
+  data_viool$Z_score[data_viool$Z_score <  -5] <-  -5
   
-  # draw violin plot. This is code for 20 violin plots; modify.
-  ggplot_object <- ggplot(metab_list_2plot, aes(x=value, y=HMDB_code)) +
-    theme(axis.text.y=element_text(size=rel(fontsize)), plot.caption = element_text(size=rel(fontsize))) +
-    # xlim(-5, 20) +
-    geom_violin(scale="width") +
-    geom_point(data = pt_list_2plot, aes(color=value), size = 3.5*circlesize, shape=22, fill="white") +
-    scale_fill_gradientn(colors = colors_4plot, values = NULL, space = "Lab", na.value = "grey50", guide = "colourbar", aesthetics = "colour") +
-    # add Z-score value for patient of interest at x=16
-    geom_text(data = pt_list_2plot, aes(16, label = paste0("Z=", round(value_orig, 2))), hjust = "left", vjust = +0.2, size = Z_size) +
-    # add labels. Use font Courier to get all the plots in the same location.
-    labs(x = "Z-scores", y = "Metabolites", subtitle = sub_perpage, color = "z-score") + 
-    theme(axis.text.y = element_text(family = "Courier", size=6)) +
-    # do not show legend
-    theme(legend.position="none") +
-    # add title 
-    ggtitle(label = paste0("Results for patient ", pt_name)) + 
-    # labs(x = "Z-scores", y = "Metabolites", title = paste0("Results for patient ", pt_name), subtitle = sub_perpage, color = "z-score") + 
-    # add vertical lines
+  data_viool_pt <- data_viool[which(data_viool$Sample %in% sample_id), ]
+  data_viool_pt$Zscore_orig <- data_viool_pt_orig$Z_score
+  
+  data_viool <- data_viool[-which(data_viool$Sample %in% sample_id), ]
+  
+  label_split <- function(label) (str_replace_all(label, paste0("(.{15})"), "\\1\n"))
+  
+  violin_plot <- ggplot(data_viool, aes(x = Z_score, y = run_name)) + 
+    xlim(-5, 20) + geom_violin(scale = "width") +
+    theme(axis.text.y=element_text(size=rel(1.5)), plot.caption = element_text(size=rel(1)), 
+          legend.position = "none", strip.text.y.left = element_text(angle = 0),
+          strip.background = element_rect(colour = "black", fill = "white", linewidth = 1, linetype = "solid"),
+          strip.text = element_text(size = 12)) +
+    facet_grid(HMDB_name ~ ., scales="free", switch = "y", space = "free", labeller = as_labeller(label_split)) +
+    geom_point(data = data_viool_pt, aes(fill = Zscore_orig), size = 5, shape=22) +
     geom_vline(xintercept = 2, col = "grey", lwd = 0.5, lty=2) +
-    geom_vline(xintercept = -2, col = "grey", lwd = 0.5, lty=2)
+    geom_vline(xintercept = -2, col = "grey", lwd = 0.5, lty=2) +
+    scale_fill_gradientn(colors = colors_4plot, values = NULL, space = "Lab", na.value = "grey50", guide = "colourbar", aesthetics = "colour") +
+    geom_text(data = data_viool_pt, aes(16, label = paste0("Z = ", round(Zscore_orig, 2))), hjust = 0, vjust = +0.2, size = 5) +
+    labs(x = "Z-scores", y = "Metabolites", color = "z-score") + 
+    scale_y_discrete(position = "right")
   
-  suppressWarnings(print(ggplot_object))
-  
-} # end create_violin_plots
+  return(violin_plot)
+}
+
 
