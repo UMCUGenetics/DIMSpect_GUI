@@ -50,6 +50,7 @@ get_run_zscore_data_db <- function(api, run_names, iden, zscore_min, zscore_max,
   # TODO: verwijder distinct() na update DIMSdb
   run_zscore_data <- run_zscore_data %>% distinct()
   run_zscore_data <- run_zscore_data  %>% pivot_wider(names_from = sample_id, values_from = c(Zscore), names_glue = "{sample_id}_{.value}")
+  run_zscore_data$HMDB_name <- gsub('"', '', run_zscore_data$HMDB_name)
   
   return(run_zscore_data)
 }
@@ -70,10 +71,15 @@ get_patient_data <- function(api, patient_query_input, zscore_high, zscore_low, 
 }
 
 select_plot_data <- function(patient_data, selected_metabolites) {
-  info_columns <- grep("HMDB_name|m_z", colnames(patient_data))
-  zscore_columns <- grep("_Zscore", colnames(patient_data))
-  # selection of metabolites from table (https://yihui.shinyapps.io/DT-rows)
-  plot_data_selected <- patient_data[selected_metabolites, c(info_columns[2], zscore_columns)]
+  # patient_data <<- patient_data
+  # info_columns <<- grep("HMDB_name|m_z", colnames(patient_data))
+  # zscore_columns <<- grep("_Zscore", colnames(patient_data))
+  # # selection of metabolites from table (https://yihui.shinyapps.io/DT-rows)
+  # plot_data_selected <- patient_data[selected_metabolites, c(info_columns[2], zscore_columns)]
+  
+  plot_data_selected <- patient_data %>% select(HMDB_name, run_name, c(contains("_Zscore"))) %>% 
+    slice(selected_metabolites)
+  
   return(plot_data_selected)
 }
 
@@ -94,15 +100,13 @@ create_violin_plots <- function(metab_data, sample_id) {
   
   data_viool <- data_viool[-which(data_viool$Sample %in% sample_id), ]
   
-  label_split <- function(label) (str_replace_all(label, paste0("(.{15})"), "\\1\n"))
-  
   violin_plot <- ggplot(data_viool, aes(x = Z_score, y = run_name)) + 
     xlim(-5, 20) + geom_violin(scale = "width") +
     theme(axis.text.y=element_text(size=rel(1.5)), plot.caption = element_text(size=rel(1)), 
           legend.position = "none", strip.text.y.left = element_text(angle = 0),
           strip.background = element_rect(colour = "black", fill = "white", linewidth = 1, linetype = "solid"),
           strip.text = element_text(size = 12)) +
-    facet_grid(HMDB_name ~ ., scales="free", switch = "y", space = "free", labeller = as_labeller(label_split)) +
+    facet_grid(HMDB_name ~ ., scales="free", switch = "y", space = "free", labeller = as_labeller(split_label)) +
     geom_point(data = data_viool_pt, aes(fill = Zscore_orig), size = 5, shape=22) +
     geom_vline(xintercept = 2, col = "grey", lwd = 0.5, lty=2) +
     geom_vline(xintercept = -2, col = "grey", lwd = 0.5, lty=2) +
@@ -114,4 +118,6 @@ create_violin_plots <- function(metab_data, sample_id) {
   return(violin_plot)
 }
 
-
+split_label <- function(label) {
+  str_replace_all(label, "(.{15})", "\\1\n")
+}

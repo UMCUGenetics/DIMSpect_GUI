@@ -4,24 +4,28 @@ library(shinyjs)
 
 ui <- fluidPage(
   shinyjs::useShinyjs(),
-  titlePanel(title = span(img(src = "DIMSpect_logo.png", height = 30), " DIMS results database")),
+  # titlePanel(title = span(img(src = "DIMSpect_logo.png", height = 30), " DIMS results database")),
   # add a spinner which is activated when a process takes more than 500 ms to replace the progress bar
   # add_busy_spinner(spin = "folding-cube", position = "full-page", timeout = 500), 
-  navbarPage(title = "DIMSpect", 
+  navbarPage(title = div(img(src="dimspect_logo.svg", 
+                             height=50, 
+                             style="margin-top: -14px;
+                                           padding-right: 10px;
+                                           padding-bottom: 10px"),"DIMS results database"), 
              
     ############ UI: Patient query #######################
     tabPanel("Patient query",
              sidebarLayout(
-                sidebarPanel(
+                sidebarPanel(width = 3, 
                   selectInput(inputId = "matrix_selected", label = "Matrix", 
                               choices = c("plasma","DBS","urine", "CSF"), selected = 1),
                   textInput(inputId = "patient_id", label = "Patient ID"),
                   textInput(inputId = "sample_id", label = "Sample ID"),
                   textInput(inputId = "run_name", label = "Run name"),
-                  actionButton(inputId = "view_patient_selection", label = "View all occurrences of patient ID"),
-                  uiOutput("sel_for_query"),
-                  actionButton(inputId = "update_view_pat_sel", label = "Werkt nog niet: Exclude entries from query"),
-                  uiOutput("sample_selection"),
+                  actionButton(inputId = "view_patient_selection", label = "Get all patient info"),
+                  br(), br(),
+                  actionButton(inputId = "update_view_pat_sel", label = "Exclude entries from query"),
+                  hr(style = "border-top: 1px solid #303c54;"),
                   disabled(
                     numericInput(inputId = "zscore_low", label = "Cut-off for decreased Z-score", value = -1.5, step = 0.1)
                     ),
@@ -33,10 +37,12 @@ ui <- fluidPage(
                               choices = c("Identified only" = "iden", "Unidentified only" = "not_iden", 
                                           "both identified and unidentified" = "all"), selected = 1)
                     ),
-                  actionButton(inputId = "run_patient_query", label = "Run patient query")
+                  disabled(
+                    actionButton(inputId = "run_patient_query", label = "Run patient query")
+                  )
                 ), # end sidebarPanel
                         
-                mainPanel(
+                mainPanel(width = 9,
                   tabsetPanel(type = "tabs", id = "patient_query",
                     tabPanel("Patient info",DT::dataTableOutput('patient_list')),
                     
